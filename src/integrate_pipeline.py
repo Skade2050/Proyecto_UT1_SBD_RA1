@@ -335,6 +335,69 @@ def build_book_source_detail(df_all: pd.DataFrame) -> pd.DataFrame:
     return detail
 
 def generate_schema_md(dim_book: pd.DataFrame) -> str:
+    """
+    Genera un Markdown descriptivo del esquema y la tabla dim_book.
+    Añade:
+
+    1. Descripción general
+    2. Fuentes de datos
+    3. Reglas de deduplicación y supervivencia
+    4. Tabla de columnas (como ya tenías)
+    """
+
+    # ==============================
+    # SECCIÓN NUEVA (texto descriptivo)
+    # ==============================
+
+    header = """
+# Documentación del Esquema: `dim_book`
+
+Este documento detalla la estructura, campos y reglas de negocio de la tabla canónica `dim_book`,
+que consolida información de libros provenientes de Goodreads y Google Books.
+
+## Descripción General
+
+`dim_book` es una tabla dimensional que contiene una fila única por cada libro, identificada por `book_id`.
+Los datos son el resultado de un proceso de integración que incluye normalización, validación de calidad y deduplicación.
+
+## Fuentes de Datos
+
+El modelo se construye a partir de las siguientes fuentes, en orden de prioridad:
+
+1. **Google Books (`google_books`)**:  
+   Fuente principal, preferida por la riqueza de sus metadatos (ISBN, detalles de publicación, categorías, precios).
+
+2. **Goodreads (`goodreads`)**:  
+   Fuente secundaria, utilizada para complementar información como ratings y conteos de valoraciones,
+   o como base para libros no presentes en Google Books.
+
+## Reglas de Deduplicación y Supervivencia
+
+El objetivo es tener un registro único y de alta calidad por cada libro.
+
+### **Clave de Deduplicación**
+
+1. **Primaria**: `isbn13`.  
+2. **Fallback**: Si no existe `isbn13`, se genera un `book_id` mediante un hash estable derivado de:
+   - `titulo_normalizado`
+   - `autor_principal`
+   - `anio_publicacion`
+
+### **Reglas de Supervivencia** (qué datos se conservan cuando hay duplicados)
+
+- **Registro Ganador**: Se elige Google Books primero (mayor riqueza y estructura).  
+- **Títulos**: Se prefiere Google Books.  
+- **Autores y Categorías**: Se combinan sin perder información.  
+- **ISBN**: Se utiliza cualquier valor válido, priorizando Google Books.  
+
+---
+
+"""
+
+    # ==============================
+    # SECCIÓN ORIGINAL (tabla de campos)
+    # ==============================
+
     descriptions = {
         "book_id": "Identificador único del libro en el modelo canónico (isbn13 o clave derivada).",
         "titulo": "Título principal del libro.",
@@ -348,19 +411,19 @@ def generate_schema_md(dim_book: pd.DataFrame) -> str:
         "isbn10": "ISBN-10 del libro, si está disponible.",
         "isbn13": "ISBN-13 del libro, si está disponible.",
         "paginas": "Número de páginas.",
-        "formato": "Formato del libro (tapa dura, bolsillo, ebook, etc.) — no siempre disponible.",
+        "formato": "Formato del libro (tapa dura, bolsillo, ebook, etc.).",
         "categoria": "Categorías o géneros en texto plano.",
         "precio": "Precio numérico si viene informado por la fuente.",
-        "moneda": "Moneda de precio en ISO-4217 (ej: EUR, USD).",
+        "moneda": "ISO-4217 (ej: EUR, USD).",
         "rating": "Valoración media del libro (Goodreads).",
-        "ratings_count": "Número de valoraciones (usuarios) en Goodreads.",
-        "fuente_ganadora": "Fuente que ha ganado en la deduplicación (google_books o goodreads).",
-        "ts_ultima_actualizacion": "Marca de tiempo UTC de la última actualización del registro.",
+        "ratings_count": "Número total de valoraciones.",
+        "fuente_ganadora": "Fuente seleccionada tras deduplicación.",
+        "ts_ultima_actualizacion": "Timestamp de la última actualización.",
     }
 
     lines: List[str] = []
-    lines.append("# Esquema de la tabla dim_book\n")
-    lines.append("Tabla canónica de libros, una fila por libro, tras integrar todas las fuentes.\n")
+    lines.append(header)
+    lines.append("## Esquema de Columnas\n")
     lines.append("| Campo | Tipo pandas | Descripción |")
     lines.append("|-------|-------------|-------------|")
 
