@@ -335,20 +335,7 @@ def build_book_source_detail(df_all: pd.DataFrame) -> pd.DataFrame:
     return detail
 
 def generate_schema_md(dim_book: pd.DataFrame) -> str:
-    """
-    Genera un Markdown descriptivo del esquema y la tabla dim_book.
-    Añade:
-
-    1. Descripción general
-    2. Fuentes de datos
-    3. Reglas de deduplicación y supervivencia
-    4. Tabla de columnas (como ya tenías)
-    """
-
-    # ==============================
-    # SECCIÓN NUEVA (texto descriptivo)
-    # ==============================
-
+    
     header = """
 # Documentación del Esquema: `dim_book`
 
@@ -393,11 +380,6 @@ El objetivo es tener un registro único y de alta calidad por cada libro.
 ---
 
 """
-
-    # ==============================
-    # SECCIÓN ORIGINAL (tabla de campos)
-    # ==============================
-
     descriptions = {
         "book_id": "Identificador único del libro en el modelo canónico (isbn13 o clave derivada).",
         "titulo": "Título principal del libro.",
