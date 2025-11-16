@@ -1,0 +1,10 @@
+{
+  "total_registros": 24,
+  "total_goodreads": 12,
+  "total_google_books": 12,
+  "porcentaje_valid_isbn13": 0.0,
+  "porcentaje_valid_fecha_publicacion": 50.0,
+  "porcentaje_valid_idioma": 50.0,
+  "porcentaje_valid_moneda": 29.17,
+  "claves_candidatas_duplicadas": 0
+}
