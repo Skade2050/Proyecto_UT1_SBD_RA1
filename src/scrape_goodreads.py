@@ -1,7 +1,7 @@
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Optional
 from urllib.parse import quote_plus
@@ -9,13 +9,9 @@ from urllib.parse import quote_plus
 import requests
 from bs4 import BeautifulSoup
 
-# URL base de Goodreads para un libro concreto
 BASE_BOOK_URL = "https://www.goodreads.com/book/show/{}"
-
-# URL base de búsqueda
 BASE_SEARCH_URL = "https://www.goodreads.com/search?q={query}"
 
-# User-Agent "realista" para que Goodreads no sospeche que somos un script
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -24,142 +20,264 @@ HEADERS = {
     )
 }
 
-# Parámetros de la búsqueda automática
-SEARCH_QUERY = "data science"   # cámbialo si quieres otra temática
-MAX_BOOKS = 12                  # número máximo de libros a scrapear
+CONSULTA_DEFAULT = "data science"
+NUM_BOOKS_DEFAULT = 12
+MAX_PAGINAS_BUSQUEDA = 5
 
-# Ruta al archivo de salida dentro de landing/
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LANDING_DIR = PROJECT_ROOT / "landing"
 OUTPUT_JSON = LANDING_DIR / "goodreads_books.json"
 
-
 def fetch_html(url: str) -> Optional[str]:
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        response.raise_for_status()
-        return response.text
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        return resp.text
     except requests.RequestException as e:
-        print(f"[ERROR] No se pudo descargar la página {url}: {e}")
+        print(f"[ERROR] No se pudo descargar {url}: {e}")
         return None
-
 
 def extract_book_id_from_href(href: str) -> Optional[str]:
     if not href:
         return None
     m = re.search(r"/book/show/(\d+)", href)
-    if m:
-        return m.group(1)
+    return m.group(1) if m else None
+
+def clean_isbn(candidate: str) -> Optional[str]:
+    if not candidate:
+        return None
+    digits = re.sub(r"\D", "", candidate)
+    if len(digits) in (10, 13):
+        return digits
     return None
 
+def extract_isbns_from_ld_json(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
+    isbn10 = None
+    isbn13 = None
 
-def search_book_ids(query: str, max_books: int, max_pages: int = 5) -> List[str]:
-    print(f"[INFO] Buscando libros en Goodreads con la query: {query!r}")
+    for script in soup.find_all("script", type="application/ld+json"):
+        try:
+            data = json.loads(script.string or "")
+        except (TypeError, json.JSONDecodeError):
+            continue
+
+        # A veces hay un solo objeto, a veces una lista
+        candidates = data if isinstance(data, list) else [data]
+
+        for obj in candidates:
+            if not isinstance(obj, dict):
+                continue
+            raw_isbn = obj.get("isbn")
+            cleaned = clean_isbn(str(raw_isbn)) if raw_isbn else None
+            if not cleaned:
+                continue
+
+            if len(cleaned) == 13 and isbn13 is None:
+                isbn13 = cleaned
+            elif len(cleaned) == 10 and isbn10 is None:
+                isbn10 = cleaned
+
+        if isbn10 or isbn13:
+            break
+
+    return {"isbn10": isbn10, "isbn13": isbn13}
+
+def extract_isbns_from_text(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
+    text = soup.get_text(" ", strip=True)
+    candidates = re.findall(r"ISBN[^\dXx]*([\dXx\- ]+)", text)
+
+    isbn10 = None
+    isbn13 = None
+
+    for c in candidates:
+        cleaned = clean_isbn(c)
+        if not cleaned:
+            continue
+        if len(cleaned) == 13 and isbn13 is None:
+            isbn13 = cleaned
+        elif len(cleaned) == 10 and isbn10 is None:
+            isbn10 = cleaned
+
+    return {"isbn10": isbn10, "isbn13": isbn13}
+
+
+def extract_isbns(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
+    data = extract_isbns_from_ld_json(soup)
+    if data["isbn10"] or data["isbn13"]:
+        return data
+    return extract_isbns_from_text(soup)
+
+def search_book_ids(query: str, max_books: int) -> List[str]:
+    print(f"[INFO] Buscando libros con la consulta: {query!r}")
     book_ids: List[str] = []
 
-    for page in range(1, max_pages + 1):
-        url = f"https://www.goodreads.com/search?page={page}&q={quote_plus(query)}"
-        print(f"[INFO]   Descargando página de búsqueda {page}: {url}")
+    for page in range(1, MAX_PAGINAS_BUSQUEDA + 1):
+        url = f"{BASE_SEARCH_URL.format(query=quote_plus(query))}&page={page}"
+        print(f"[INFO]   Página {page}: {url}")
+
         html = fetch_html(url)
         if html is None:
-            print("[WARN]   No se pudo obtener esta página de búsqueda, se corta el bucle.")
+            print("[WARN]   No se pudo obtener la página de búsqueda, se detiene la búsqueda.")
             break
 
         soup = BeautifulSoup(html, "lxml")
-        rows = soup.select("table.tableList tr")
+
+        # contenedor de libro = tr[itemtype='http://schema.org/Book']
+        rows = soup.select("tr[itemtype='http://schema.org/Book']")
         if not rows:
-            print("[INFO]   No hay más resultados en esta página, fin de la búsqueda.")
+            print("[INFO]   No hay más resultados en esta página.")
             break
 
         for row in rows:
             link = row.select_one("a.bookTitle")
             if not link:
                 continue
+
             href = link.get("href", "")
             book_id = extract_book_id_from_href(href)
             if book_id and book_id not in book_ids:
                 book_ids.append(book_id)
-                print(f"[INFO]     Encontrado libro ID={book_id}")
+                print(f"[INFO]     Encontrado ID={book_id}")
+
             if len(book_ids) >= max_books:
                 break
 
         if len(book_ids) >= max_books:
             break
 
-        # Pequeña pausa por cortesía
         time.sleep(0.5)
 
     print(f"[INFO] Total de IDs encontrados: {len(book_ids)}")
     return book_ids
 
+def extract_data_from_ld_json(soup: BeautifulSoup) -> Dict:
+    """Extrae datos estructurados de un script JSON-LD en la página."""
+    ld_json_data = {}
+    script = soup.find("script", type="application/ld+json")
+    if not script:
+        return ld_json_data
 
-def extract_isbns_from_soup(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
-    text = soup.get_text(" ", strip=True)
+    try:
+        data = json.loads(script.string or "")
+    except (TypeError, json.JSONDecodeError):
+        return ld_json_data
 
-    # ISBN-13: secuencia de exactamente 13 dígitos
-    match_13 = re.search(r"\b\d{13}\b", text)
-    isbn13 = match_13.group(0) if match_13 else None
+    # A veces hay un solo objeto, a veces una lista
+    candidates = data if isinstance(data, list) else [data]
 
-    # ISBN-10: secuencia de exactamente 10 dígitos
-    match_10 = re.search(r"\b\d{10}\b", text)
-    isbn10 = match_10.group(0) if match_10 else None
+    for obj in candidates:
+        if not isinstance(obj, dict) or obj.get("@type") != "Book":
+            continue
 
-    return {"isbn10": isbn10, "isbn13": isbn13}
+        # Título
+        if "name" in obj:
+            ld_json_data["title"] = obj["name"]
 
+        # Autores
+        if "author" in obj and isinstance(obj["author"], list):
+            authors = [a.get("name") for a in obj["author"] if a.get("name")]
+            if authors:
+                ld_json_data["authors"] = ", ".join(authors)
+
+        # Rating y número de valoraciones
+        if "aggregateRating" in obj and isinstance(obj["aggregateRating"], dict):
+            rating_info = obj["aggregateRating"]
+            if "ratingValue" in rating_info:
+                try:
+                    ld_json_data["rating_value"] = float(rating_info["ratingValue"])
+                except (ValueError, TypeError):
+                    pass
+            if "ratingCount" in rating_info:
+                try:
+                    ld_json_data["ratings_count"] = int(rating_info["ratingCount"])
+                except (ValueError, TypeError):
+                    pass
+        
+        # ISBN (ya que estamos aquí)
+        if "isbn" in obj:
+            cleaned_isbn = clean_isbn(str(obj["isbn"]))
+            if cleaned_isbn:
+                if len(cleaned_isbn) == 13:
+                    ld_json_data["isbn13"] = cleaned_isbn
+                elif len(cleaned_isbn) == 10:
+                    ld_json_data["isbn10"] = cleaned_isbn
+        
+        # Si hemos encontrado todo lo principal, podemos parar
+        if "title" in ld_json_data and "authors" in ld_json_data:
+            break
+            
+    return ld_json_data
 
 def parse_book(html: str, book_id: str) -> Dict:
     soup = BeautifulSoup(html, "lxml")
 
-    # Título del libro
-    title_tag = soup.select_one("h1[data-testid='bookTitle']")
-    title = title_tag.get_text(strip=True) if title_tag else None
+    # Estrategia 1: Extraer datos de JSON-LD (preferido)
+    ld_data = extract_data_from_ld_json(soup)
 
-    # Autores (puede haber varios enlaces bajo 'data-testid=authorName')
-    author_tags = soup.select("span[data-testid='authorName'] a")
-    authors = [a.get_text(strip=True) for a in author_tags] if author_tags else []
-    authors_str = ", ".join(authors) if authors else None
+    # Estrategia 2: Fallback a selectores CSS si JSON-LD falla
+    
+    # Título
+    title = ld_data.get("title")
+    if not title:
+        title_tag = soup.select_one("h1[data-testid='bookTitle']")
+        title = title_tag.get_text(strip=True) if title_tag else None
 
-    # Valoración media (rating)
-    rating_tag = soup.select_one("div[data-testid='rating'] span[data-testid='ratingValue']")
-    rating_value = None
-    if rating_tag:
-        try:
-            rating_value = float(rating_tag.get_text(strip=True))
-        except ValueError:
-            rating_value = None
+    # Autor(es)
+    authors_str = ld_data.get("authors")
+    if not authors_str:
+        author_tags = soup.select("span[data-testid='authorName'] a")
+        authors = [a.get_text(strip=True) for a in author_tags] if author_tags else []
+        authors_str = ", ".join(authors) if authors else None
 
-    # Número de valoraciones (ratings_count)
-    ratings_count_tag = soup.select_one("div[data-testid='rating'] span[data-testid='ratingsCount']")
-    ratings_count = None
-    if ratings_count_tag:
-        text = ratings_count_tag.get_text(strip=True).replace(",", "")
-        parts = text.split()
-        if parts and parts[0].isdigit():
-            ratings_count = int(parts[0])
+    # Rating medio
+    rating_value = ld_data.get("rating_value")
+    if rating_value is None:
+        rating_tag = soup.select_one("div[data-testid='rating'] span[data-testid='ratingValue']")
+        if rating_tag:
+            try:
+                rating_value = float(rating_tag.get_text(strip=True))
+            except (ValueError, TypeError):
+                rating_value = None
 
-    # Número de páginas (pages)
-    pages_tag = soup.find("p", attrs={"data-testid": "pagesFormat"})
+    # Número de valoraciones
+    ratings_count = ld_data.get("ratings_count")
+    if ratings_count is None:
+        ratings_count_tag = soup.select_one("div[data-testid='rating'] span[data-testid='ratingsCount']")
+        if ratings_count_tag:
+            txt = ratings_count_tag.get_text(strip=True).replace(",", "")
+            num_match = re.search(r"^\d+", txt)
+            if num_match:
+                ratings_count = int(num_match.group(0))
+
+    # Páginas
     pages = None
+    pages_tag = soup.find("p", attrs={"data-testid": "pagesFormat"})
     if pages_tag:
-        text = pages_tag.get_text(strip=True).lower()
-        for token in text.split():
+        txt = pages_tag.get_text(strip=True).lower()
+        for token in txt.split():
             if token.isdigit():
                 pages = int(token)
                 break
 
-    # Info de publicación (texto bruto)
-    details_section = soup.find("p", attrs={"data-testid": "publicationInfo"})
-    publication_info = details_section.get_text(strip=True) if details_section else None
+    # Información de publicación en bruto
+    publication_info_raw = None
+    pub_tag = soup.find("p", attrs={"data-testid": "publicationInfo"})
+    if pub_tag:
+        publication_info_raw = pub_tag.get_text(strip=True)
 
-    # Intentamos extraer ISBNs de forma sencilla (si no hay, se quedan en None)
-    isbn_data = extract_isbns_from_soup(soup)
-    isbn10 = isbn_data["isbn10"]
-    isbn13 = isbn_data["isbn13"]
+    # ISBNs
+    isbn10 = ld_data.get("isbn10")
+    isbn13 = ld_data.get("isbn13")
+    if not isbn10 and not isbn13:
+        # Fallback a los métodos de extracción de ISBN si no están en JSON-LD
+        isbn_data = extract_isbns(soup)
+        isbn10 = isbn_data["isbn10"]
+        isbn13 = isbn_data["isbn13"]
 
-    # Metadatos útiles para el pipeline y la documentación
-    scraped_at = datetime.utcnow().isoformat()
 
-    book_dict = {
+    scraped_at = datetime.now(timezone.utc).isoformat()
+
+    return {
         "source": "goodreads",
         "book_id_source": book_id,
         "url": BASE_BOOK_URL.format(book_id),
@@ -168,68 +286,56 @@ def parse_book(html: str, book_id: str) -> Dict:
         "rating_value": rating_value,
         "ratings_count": ratings_count,
         "pages": pages,
-        "publication_info_raw": publication_info,
+        "publication_info_raw": publication_info_raw,
         "isbn10": isbn10,
         "isbn13": isbn13,
-        "search_query": SEARCH_QUERY,
+        "search_query": CONSULTA_DEFAULT,
         "scraped_at": scraped_at,
     }
-
-    return book_dict
-
 
 def scrape_goodreads(book_ids: List[str]) -> List[Dict]:
     results: List[Dict] = []
 
     for idx, book_id in enumerate(book_ids, start=1):
-        print(f"[INFO] ({idx}/{len(book_ids)}) Procesando libro ID={book_id}...")
-
-        url = BASE_BOOK_URL.format(book_id)
-        html = fetch_html(url)
+        print(f"[INFO] ({idx}/{len(book_ids)}) Libro ID={book_id}")
+        html = fetch_html(BASE_BOOK_URL.format(book_id))
         if html is None:
-            print(f"[WARN] Saltando libro {book_id} por error de descarga.")
+            print(f"[WARN]   Saltando libro {book_id} por error de descarga.")
             continue
 
-        book_data = parse_book(html, book_id)
-        results.append(book_data)
+        try:
+            book_data = parse_book(html, book_id)
+            results.append(book_data)
+        except Exception as e:
+            print(f"[WARN]   Error parseando libro {book_id}: {e}")
 
-        # Pausa para no saturar Goodreads (entre 0.5 y 1.5 segundos)
         time.sleep(1.0)
 
     print(f"[INFO] Scraping terminado. Libros válidos: {len(results)}")
     return results
 
-
 def save_to_json(records: List[Dict], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
+    print(f"[INFO] Archivo guardado en: {output_path}")
 
-    print(f"[INFO] Archivo JSON guardado en: {output_path}")
-
-def main():
+def main() -> None:
     print("[INFO] Inicio del scraping de Goodreads.")
-    print(f"[INFO] Búsqueda configurada: {SEARCH_QUERY!r} (máx. {MAX_BOOKS} libros)")
+    print(f"[INFO] Consulta: {CONSULTA_DEFAULT!r}")
 
-    # 1) Buscar IDs automáticamente
-    book_ids = search_book_ids(SEARCH_QUERY, MAX_BOOKS)
-    if not book_ids:
-        print("[ERROR] No se ha encontrado ningún ID de libro en la búsqueda.")
+    ids = search_book_ids(CONSULTA_DEFAULT, NUM_BOOKS_DEFAULT)
+    if not ids:
+        print("[ERROR] No se ha encontrado ningún ID de libro.")
         return
 
-    print(f"[INFO] IDs que se van a scrapear: {book_ids}")
-
-    # 2) Scraping de cada ficha de libro
-    books = scrape_goodreads(book_ids)
+    books = scrape_goodreads(ids)
     if not books:
-        print("[ERROR] No se ha podido obtener ningún libro. Revisa la conexión o los selectores.")
+        print("[ERROR] No se ha podido scrapear ningún libro.")
         return
 
-    # 3) Guardar JSON en landing/
     save_to_json(books, OUTPUT_JSON)
     print("[INFO] Proceso completado correctamente.")
-
 
 if __name__ == "__main__":
     main()
