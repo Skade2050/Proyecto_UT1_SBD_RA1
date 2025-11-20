@@ -310,11 +310,11 @@ El objetivo es tener un registro único y de alta calidad por cada libro.
 
 
 def main():
-    print("[INFO] Inicio de la integración multifuente.")
+    print("Inicio de la integración multifuente.")
     df_goodreads = load_goodreads()
     df_google = load_googlebooks()
-    print(f"[INFO] Registros Goodreads: {len(df_goodreads)}")
-    print(f"[INFO] Registros Google Books: {len(df_google)}")
+    print(f"Registros Goodreads: {len(df_goodreads)}")
+    print(f"Registros Google Books: {len(df_google)}")
 
     df_goodreads = normalize_and_add_fields(df_goodreads)
     df_google = normalize_and_add_fields(df_google)
@@ -323,7 +323,7 @@ def main():
     assert_quality_constraints(dim_book)
     STANDARD_DIR.mkdir(parents=True, exist_ok=True)
     dim_book.to_parquet(DIM_BOOK_PARQUET, index=False)
-    print(f"[INFO] dim_book.parquet generado en {DIM_BOOK_PARQUET}")
+    print(f"dim_book.parquet generado en {DIM_BOOK_PARQUET}")
 
     # Para los artefactos secundarios, volvemos a unir los dataframes
     all_cols = df_goodreads.columns.union(df_google.columns)
@@ -335,18 +335,18 @@ def main():
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
     with open(QUALITY_METRICS_JSON, "w", encoding="utf-8") as f:
         json.dump(metrics, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] quality_metrics.json generado en {QUALITY_METRICS_JSON}")
+    print(f"quality_metrics.json generado en {QUALITY_METRICS_JSON}")
 
     book_source_detail = build_book_source_detail(df_all)
     book_source_detail.to_parquet(BOOK_SOURCE_DETAIL_PARQUET, index=False)
-    print(f"[INFO] book_source_detail.parquet generado en {BOOK_SOURCE_DETAIL_PARQUET}")
+    print(f"book_source_detail.parquet generado en {BOOK_SOURCE_DETAIL_PARQUET}")
 
     schema_text = generate_schema_md(dim_book)
     with open(SCHEMA_MD, "w", encoding="utf-8") as f:
         f.write(schema_text)
-    print(f"[INFO] schema.md generado en {SCHEMA_MD}")
+    print(f"schema.md generado en {SCHEMA_MD}")
 
-    print("[INFO] Proceso de integración completado correctamente.")
+    print("Proceso de integración completado correctamente.")
 
 
 if __name__ == "__main__":
