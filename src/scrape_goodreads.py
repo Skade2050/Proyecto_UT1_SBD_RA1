@@ -21,7 +21,7 @@ HEADERS = {
 }
 
 CONSULTA_DEFAULT = "data science"
-NUM_BOOKS_DEFAULT = 12
+NUM_BOOKS_DEFAULT = 10
 MAX_PAGINAS_BUSQUEDA = 5
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -108,16 +108,16 @@ def extract_isbns(soup: BeautifulSoup) -> Dict[str, Optional[str]]:
     return extract_isbns_from_text(soup)
 
 def search_book_ids(query: str, max_books: int) -> List[str]:
-    print(f"[INFO] Buscando libros con la consulta: {query!r}")
+    print(f"Buscando libros con la consulta: {query!r}")
     book_ids: List[str] = []
 
     for page in range(1, MAX_PAGINAS_BUSQUEDA + 1):
         url = f"{BASE_SEARCH_URL.format(query=quote_plus(query))}&page={page}"
-        print(f"[INFO]   Página {page}: {url}")
+        print(f" Página {page}: {url}")
 
         html = fetch_html(url)
         if html is None:
-            print("[WARN]   No se pudo obtener la página de búsqueda, se detiene la búsqueda.")
+            print(" No se pudo obtener la página de búsqueda, se detiene la búsqueda.")
             break
 
         soup = BeautifulSoup(html, "lxml")
@@ -125,7 +125,7 @@ def search_book_ids(query: str, max_books: int) -> List[str]:
         # contenedor de libro = tr[itemtype='http://schema.org/Book']
         rows = soup.select("tr[itemtype='http://schema.org/Book']")
         if not rows:
-            print("[INFO]   No hay más resultados en esta página.")
+            print("No hay más resultados en esta página.")
             break
 
         for row in rows:
@@ -137,7 +137,7 @@ def search_book_ids(query: str, max_books: int) -> List[str]:
             book_id = extract_book_id_from_href(href)
             if book_id and book_id not in book_ids:
                 book_ids.append(book_id)
-                print(f"[INFO]     Encontrado ID={book_id}")
+                print(f" Encontrado ID={book_id}")
 
             if len(book_ids) >= max_books:
                 break
@@ -147,7 +147,7 @@ def search_book_ids(query: str, max_books: int) -> List[str]:
 
         time.sleep(0.5)
 
-    print(f"[INFO] Total de IDs encontrados: {len(book_ids)}")
+    print(f"Total de IDs encontrados: {len(book_ids)}")
     return book_ids
 
 def extract_data_from_ld_json(soup: BeautifulSoup) -> Dict:
@@ -297,45 +297,45 @@ def scrape_goodreads(book_ids: List[str]) -> List[Dict]:
     results: List[Dict] = []
 
     for idx, book_id in enumerate(book_ids, start=1):
-        print(f"[INFO] ({idx}/{len(book_ids)}) Libro ID={book_id}")
+        print(f"({idx}/{len(book_ids)}) Libro ID={book_id}")
         html = fetch_html(BASE_BOOK_URL.format(book_id))
         if html is None:
-            print(f"[WARN]   Saltando libro {book_id} por error de descarga.")
+            print(f" Saltando libro {book_id} por error de descarga.")
             continue
 
         try:
             book_data = parse_book(html, book_id)
             results.append(book_data)
         except Exception as e:
-            print(f"[WARN]   Error parseando libro {book_id}: {e}")
+            print(f" Error parseando libro {book_id}: {e}")
 
         time.sleep(1.0)
 
-    print(f"[INFO] Scraping terminado. Libros válidos: {len(results)}")
+    print(f"Scraping terminado. Libros válidos: {len(results)}")
     return results
 
 def save_to_json(records: List[Dict], output_path: Path) -> None:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as f:
         json.dump(records, f, ensure_ascii=False, indent=2)
-    print(f"[INFO] Archivo guardado en: {output_path}")
+    print(f"Archivo guardado en: {output_path}")
 
 def main() -> None:
-    print("[INFO] Inicio del scraping de Goodreads.")
-    print(f"[INFO] Consulta: {CONSULTA_DEFAULT!r}")
+    print("Inicio del scraping de Goodreads.")
+    print(f"Consulta: {CONSULTA_DEFAULT!r}")
 
     ids = search_book_ids(CONSULTA_DEFAULT, NUM_BOOKS_DEFAULT)
     if not ids:
-        print("[ERROR] No se ha encontrado ningún ID de libro.")
+        print("No se ha encontrado ningún ID de libro.")
         return
 
     books = scrape_goodreads(ids)
     if not books:
-        print("[ERROR] No se ha podido scrapear ningún libro.")
+        print("No se ha podido scrapear ningún libro.")
         return
 
     save_to_json(books, OUTPUT_JSON)
-    print("[INFO] Proceso completado correctamente.")
+    print("Proceso completado correctamente.")
 
 if __name__ == "__main__":
     main()
