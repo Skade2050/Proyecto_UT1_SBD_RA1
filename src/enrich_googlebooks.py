@@ -96,7 +96,7 @@ def call_google_books_api(query: str) -> Optional[Dict]:
         resp.raise_for_status()
         data = resp.json()
     except requests.RequestException as e:
-        print(f"[ERROR] Fallo en la llamada a Google Books para query='{query}': {e}")
+        print(f"Fallo en la llamada a Google Books para query='{query}': {e}")
         return None
 
     items = data.get("items")
@@ -179,7 +179,7 @@ def enrich_with_google_books(records: List[Dict]) -> List[Dict]:
     for idx, rec in enumerate(records, start=1):
         # Primer intento: query “normal”
         query = build_query(rec)
-        print(f"[INFO] ({idx}/{len(records)}) Query para Google Books: {query!r}")
+        print(f" ({idx}/{len(records)}) Query para Google Books: {query!r}")
 
         volume = None
 
@@ -190,11 +190,11 @@ def enrich_with_google_books(records: List[Dict]) -> List[Dict]:
         if volume is None:
             title_only = rec.get("title")
             if title_only:
-                print(f"[INFO]    Sin resultados, reintentando solo con título: {title_only!r}")
+                print(f" Sin resultados, reintentando solo con título: {title_only!r}")
                 volume = call_google_books_api(title_only)
 
         if volume is None:
-            print("[WARN]    Sin resultados en Google Books para este libro, se omite.")
+            print(" Sin resultados en Google Books para este libro, se omite.")
             continue
 
         gb_record = parse_google_volume(volume, query or rec.get("title") or "")
@@ -203,7 +203,7 @@ def enrich_with_google_books(records: List[Dict]) -> List[Dict]:
         # Pausa para ser "amables" con la API
         time.sleep(0.5)
 
-    print(f"[INFO] Enriquecimiento terminado. Libros enriquecidos: {len(enriched)}")
+    print(f" Enriquecimiento terminado. Libros enriquecidos: {len(enriched)}")
     return enriched
 
 
@@ -211,29 +211,29 @@ def enrich_with_google_books(records: List[Dict]) -> List[Dict]:
 def save_to_csv(records: List[Dict], output_path: Path) -> None:
 
     if not records:
-        print("[WARN] No hay registros para guardar en CSV.")
+        print("No hay registros para guardar en CSV.")
         return
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame(records)
     df.to_csv(output_path, index=False, encoding="utf-8")
-    print(f"[INFO] Archivo CSV guardado en: {output_path}")
+    print(f"Archivo CSV guardado en: {output_path}")
 
 def main():
-    print("[INFO] Inicio del enriquecimiento con Google Books.")
+    print("Inicio del enriquecimiento con Google Books.")
 
     try:
         goodreads_records = load_goodreads_records()
     except FileNotFoundError as e:
-        print(f"[ERROR] {e}")
+        print(f"{e}")
         return
 
-    print(f"[INFO] Registros leídos desde goodreads_books.json: {len(goodreads_records)}")
+    print(f"Registros leídos desde goodreads_books.json: {len(goodreads_records)}")
 
     enriched_records = enrich_with_google_books(goodreads_records)
     save_to_csv(enriched_records, OUTPUT_CSV)
 
-    print("[INFO] Proceso completado correctamente.")
+    print("Proceso completado correctamente.")
 
 if __name__ == "__main__":
     main()
